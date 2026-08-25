@@ -1,0 +1,33 @@
+algorithm:
+  name: mdqn
+  gamma: 0.99
+  tau: 0.03
+  alpha: 0.9
+  log_policy_min: -1.0
+  learning_rate: 0.00005
+  adam_epsilon: 0.0003125
+  huber_delta: 1.0
+
+training:
+  total_agent_steps: 50000000
+  steps_per_iteration: 250000
+  update_period: 4
+  target_update_period: 8000
+  target_update: hard
+  min_replay_history: 20000
+  batch_size: 32
+  replay_capacity: 1000000
+  epsilon_train: 0.01
+  epsilon_eval: 0.001
+  epsilon_decay_period: 250000
+  max_steps_per_episode: 27000
+  checkpoint_every_iterations: 1
+
+environment:
+  frame_skip: 4
+  screen_size: 84
+  stack_size: 4
+  sticky_action_probability: 0.25
+  terminal_on_life_loss: false
+  reward_clip: 1.0
+
