@@ -31,15 +31,18 @@ def munchausen_target(
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Equation (2)/(7), using the target network at s and s'."""
     current_scaled_log_policy = scaled_log_softmax(target_q_current, tau)
+    current_policy = torch.softmax(target_q_current / tau, dim=-1)
     next_scaled_log_policy = scaled_log_softmax(target_q_next, tau)
     next_policy = torch.softmax(target_q_next / tau, dim=-1)
 
-    chosen_log_policy = current_scaled_log_policy.gather(
+    chosen_unclipped_log_policy = current_scaled_log_policy.gather(
         1, actions.long().unsqueeze(1)
     ).squeeze(1)
     # The mathematical upper bound is zero. The official TF max of 1 is a
     # no-op in exact arithmetic; zero expresses the paper's [.]^0_l0 notation.
-    chosen_log_policy = chosen_log_policy.clamp(min=log_policy_min, max=0.0)
+    chosen_log_policy = chosen_unclipped_log_policy.clamp(
+        min=log_policy_min, max=0.0
+    )
     munchausen_bonus = alpha * chosen_log_policy
 
     soft_next_value = (
@@ -51,6 +54,11 @@ def munchausen_target(
         "munchausen_bonus": munchausen_bonus,
         "soft_next_value": soft_next_value,
         "entropy": -(next_policy * (next_scaled_log_policy / tau)).sum(dim=-1),
+        "point_policy_entropy": -(
+            current_policy * (current_scaled_log_policy / tau)
+        ).sum(dim=-1),
+        "point_clip_ratio": chosen_unclipped_log_policy < log_policy_min,
+        "point_unclipped_bonus": alpha * chosen_unclipped_log_policy,
     }
     return target, diagnostics
 

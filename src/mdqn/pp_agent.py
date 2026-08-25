@@ -51,7 +51,8 @@ class PosteriorPredictiveMDQNAgent(DQNAgent):
 
     def update(self, batch: ReplayBatch) -> UpdateMetrics:
         online_features = self.online.encode(batch.states)
-        chosen_q = self.online.q_from_features(online_features).gather(
+        online_q = self.online.q_from_features(online_features)
+        chosen_q = online_q.gather(
             1, batch.actions.long().unsqueeze(1)
         ).squeeze(1)
 
@@ -135,6 +136,8 @@ class PosteriorPredictiveMDQNAgent(DQNAgent):
             loss=float(main_loss.detach()),
             q_mean=float(chosen_q.detach().mean()),
             target_mean=float(target.mean()),
+            max_q_value=float(online_q.detach().max()),
+            mean_td_error=float((target - chosen_q.detach()).abs().mean()),
             munchausen_bonus_mean=float(
                 target_diagnostics["munchausen_bonus"].mean()
             ),

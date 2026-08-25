@@ -24,7 +24,8 @@ def test_mdqn_baseline_does_not_construct_posterior_modules() -> None:
     assert not hasattr(agent, "posterior_online")
     assert set(agent.state_dict()) == {"online", "target", "optimizer"}
     metrics = agent.update(_batch(2))
-    assert metrics.diagnostics == {}
+    assert "policy/point_entropy" in metrics.diagnostics
+    assert not any(name.startswith("posterior/") for name in metrics.diagnostics)
 
 
 def test_pp_behavior_policy_uses_main_q_only() -> None:

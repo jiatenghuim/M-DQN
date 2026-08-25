@@ -86,5 +86,5 @@ def test_mechanism_metrics_are_finite_for_one_head() -> None:
         eps=1e-8,
     )
     assert metrics["posterior/q_variance"] == 0
+    assert metrics["posterior/head_q_std"] == 0
     assert all(torch.isfinite(value) for value in metrics.values())
-

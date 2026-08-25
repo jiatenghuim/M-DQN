@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,8 @@ class AlgorithmConfig:
 @dataclass(frozen=True)
 class TrainingConfig:
     total_agent_steps: int = 50_000_000
+    # Optional raw-frame budget. When present it is converted using frame_skip.
+    total_frames: int | None = None
     steps_per_iteration: int = 250_000
     update_period: int = 4
     target_update_period: int = 8_000
@@ -38,6 +40,8 @@ class TrainingConfig:
     epsilon_decay_period: int = 250_000
     max_steps_per_episode: int = 27_000
     checkpoint_every_iterations: int = 1
+    checkpoint_every_frames: int | None = None
+    metrics_log_period_frames: int = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -81,16 +85,29 @@ class ExperimentConfig:
                 "soft/Polyak updates are intentionally rejected."
             )
         positive = {
+            "total_agent_steps": self.training.total_agent_steps,
+            "steps_per_iteration": self.training.steps_per_iteration,
             "update_period": self.training.update_period,
             "target_update_period": self.training.target_update_period,
             "batch_size": self.training.batch_size,
             "replay_capacity": self.training.replay_capacity,
             "frame_skip": self.environment.frame_skip,
             "stack_size": self.environment.stack_size,
+            "metrics_log_period_frames": self.training.metrics_log_period_frames,
         }
         for name, value in positive.items():
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
+        if (
+            self.training.total_frames is not None
+            and self.training.total_frames <= 0
+        ):
+            raise ValueError("total_frames must be positive")
+        if (
+            self.training.checkpoint_every_frames is not None
+            and self.training.checkpoint_every_frames <= 0
+        ):
+            raise ValueError("checkpoint_every_frames must be positive")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -99,10 +116,19 @@ class ExperimentConfig:
 def load_config(path: str | Path) -> ExperimentConfig:
     with Path(path).open("r", encoding="utf-8") as stream:
         raw = yaml.safe_load(stream) or {}
+    environment = EnvironmentConfig(**raw.get("environment", {}))
+    training = TrainingConfig(**raw.get("training", {}))
+    if training.total_frames is not None:
+        if training.total_frames % environment.frame_skip != 0:
+            raise ValueError("total_frames must be divisible by frame_skip")
+        training = replace(
+            training,
+            total_agent_steps=training.total_frames // environment.frame_skip,
+        )
     config = ExperimentConfig(
         algorithm=AlgorithmConfig(**raw.get("algorithm", {})),
-        training=TrainingConfig(**raw.get("training", {})),
-        environment=EnvironmentConfig(**raw.get("environment", {})),
+        training=training,
+        environment=environment,
     )
     config.validate()
     return config

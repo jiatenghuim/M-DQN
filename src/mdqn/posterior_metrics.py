@@ -26,6 +26,7 @@ def posterior_mechanism_metrics(
     point_policy = torch.softmax(point_q / tau, dim=-1)
 
     q_variance = posterior_q.var(dim=1, correction=0).mean(dim=-1).mean()
+    head_q_std = posterior_q.std(dim=1, correction=0).mean(dim=-1).mean()
     policy_disagreement = (
         head_policy
         * (
@@ -47,6 +48,7 @@ def posterior_mechanism_metrics(
 
     return {
         "posterior/q_variance": q_variance,
+        "posterior/head_q_std": head_q_std,
         "posterior/policy_disagreement": policy_disagreement,
         "policy/point_entropy": point_entropy,
         "policy/pp_entropy": pp_entropy,
@@ -57,4 +59,9 @@ def posterior_mechanism_metrics(
         "munchausen/point_bonus_mean": point_bonus.mean(),
         "munchausen/pp_bonus_mean": pp_bonus.mean(),
         "munchausen/bonus_difference": pp_bonus.mean() - point_bonus.mean(),
+        "munchausen/point_unclipped_bonus_mean": (alpha * point_chosen).mean(),
+        "munchausen/pp_unclipped_bonus_mean": (alpha * pp_chosen).mean(),
+        "munchausen/unclipped_bonus_difference": (
+            alpha * (pp_chosen - point_chosen)
+        ).mean(),
     }

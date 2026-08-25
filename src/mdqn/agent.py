@@ -17,6 +17,8 @@ class UpdateMetrics:
     loss: float
     q_mean: float
     target_mean: float
+    max_q_value: float = 0.0
+    mean_td_error: float = 0.0
     munchausen_bonus_mean: float = 0.0
     entropy_mean: float = 0.0
     diagnostics: dict[str, float] = field(default_factory=dict)
@@ -54,7 +56,8 @@ class DQNAgent:
         return int(self.online(tensor).argmax(dim=1).item())
 
     def update(self, batch: ReplayBatch) -> UpdateMetrics:
-        chosen_q = self.online(batch.states).gather(
+        online_q = self.online(batch.states)
+        chosen_q = online_q.gather(
             1, batch.actions.long().unsqueeze(1)
         ).squeeze(1)
         with torch.no_grad():
@@ -83,16 +86,36 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
+        metric_diagnostics: dict[str, float] = {}
+        if self.config.name == "mdqn":
+            metric_diagnostics = {
+                "policy/point_entropy": float(
+                    diagnostics["point_policy_entropy"].mean()
+                ),
+                "munchausen/point_clip_ratio": float(
+                    diagnostics["point_clip_ratio"].float().mean()
+                ),
+                "munchausen/point_bonus_mean": float(
+                    diagnostics["munchausen_bonus"].mean()
+                ),
+                "munchausen/point_unclipped_bonus_mean": float(
+                    diagnostics["point_unclipped_bonus"].mean()
+                ),
+            }
+
         return UpdateMetrics(
             loss=float(loss.detach()),
             q_mean=float(chosen_q.detach().mean()),
             target_mean=float(target.mean()),
+            max_q_value=float(online_q.detach().max()),
+            mean_td_error=float((target - chosen_q.detach()).abs().mean()),
             munchausen_bonus_mean=float(
                 diagnostics.get("munchausen_bonus", torch.zeros(1, device=self.device)).mean()
             ),
             entropy_mean=float(
                 diagnostics.get("entropy", torch.zeros(1, device=self.device)).mean()
             ),
+            diagnostics=metric_diagnostics,
         )
 
     @torch.no_grad()

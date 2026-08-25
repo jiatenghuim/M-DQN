@@ -38,13 +38,59 @@ conda run -n mdqn python -m pytest
 conda run -n mdqn python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 ```
 
+SwanLab 已包含在 `environment.yml` 和 `requirements.txt` 中。需要上传到云端时先登录：
+
+```powershell
+conda run -n mdqn swanlab login
+```
+
+也可以通过环境变量 `SWANLAB_API_KEY` 提供凭证。测试或无网络环境可额外使用 `--swanlab-mode offline`，只写入本地 `swanlog/`。
+
 Atari ROM 不随 ALE 一起分发。请确保你有权使用 ROM，并按 `ale-py`/Gymnasium 的说明安装；安装后可先验证：
 
 ```powershell
 conda run -n mdqn python -c "import gymnasium as gym; import ale_py; gym.make('ALE/Pong-v5').close()"
 ```
 
-## 训练
+## 第一阶段 PP-MDQN sanity check
+
+默认入口现在使用 `configs/debug_pp_mdqn.yaml` 和 Breakout。该配置训练 500,000 个原始 Atari frames，即 frame skip 为 4 时的 125,000 agent steps；不会默认启动论文级 200M-frame 实验。可以用 `--frames` 覆盖，值必须能被 frame skip 整除。
+
+未指定 `--run-dir` 时会自动创建带时间戳的独立运行目录。第一阶段建议分别运行：
+
+```powershell
+conda activate mdqn
+
+# DQN
+python -m mdqn.train --config configs/debug_pp_mdqn.yaml --algo dqn --game Breakout --seed 0 --frames 500000 --device cuda --use-swanlab
+
+# M-DQN
+python -m mdqn.train --config configs/debug_pp_mdqn.yaml --algo mdqn --game Breakout --seed 0 --frames 500000 --device cuda --use-swanlab
+
+# PP-MDQN-M：第一阶段默认实验
+python -m mdqn.train --config configs/debug_pp_mdqn.yaml --algo pp_mdqn --pp-scope munchausen_only --game Breakout --seed 0 --frames 500000 --device cuda --use-swanlab
+```
+
+`full_operator` 已保留，但暂不作为第一阶段默认实验。SwanLab project 固定为 `PP-MDQN`，实验名分别类似 `dqn_Breakout_seed0`、`mdqn_Breakout_seed0` 和 `pp_mdqn_m_only_Breakout_seed0`。
+
+训练启动时会打印 algorithm、game、seed、frames、posterior heads、scope、device 和运行目录，并检查 DQN/M-DQN 没有 posterior heads、PP-MDQN 已初始化 online/target posterior heads。
+
+debug 配置每 10,000 frames 聚合一次训练指标，每跨过 50,000-frame 阈值后在第一个 episode 边界保存最新 checkpoint。episode 边界保存可以避免恢复时把新的 ALE reset 错接到 replay 中间。恢复时指定原运行目录：
+
+```powershell
+python -m mdqn.train --config configs/debug_pp_mdqn.yaml --algo pp_mdqn --pp-scope munchausen_only --game Breakout --seed 0 --device cuda --use-swanlab --resume --run-dir <原运行目录>
+```
+
+SwanLab 中记录以下曲线：
+
+- episode：`episode_return`、`episode_length`、`global_step`；
+- Q learning：`loss/q_loss`、`mean_q_value`、`max_q_value`、`mean_td_error`；
+- Munchausen：`point_policy_entropy`、`posterior_predictive_entropy`、`point_munchausen_bonus`、`pp_munchausen_bonus`、`bonus_difference`、两个 clip ratio；
+- posterior：`posterior_q_variance`、`posterior_policy_disagreement`、`posterior_head_q_std`。
+
+其中 `mean_td_error` 是 batch mean absolute TD error；`point_munchausen_bonus` 和 `pp_munchausen_bonus` 是裁剪前的 `alpha * tau * log pi`，另以 `actual_*_munchausen_bonus` 记录真正进入 target 的裁剪后值。DQN 不伪造 Munchausen/posterior 指标，M-DQN 不调用或记录 PP policy，只有 PP-MDQN 具备完整机制指标。
+
+## 正式论文实验
 
 完整论文配置（单个游戏、单个 seed）：
 
@@ -79,6 +125,10 @@ conda run -n mdqn python -m mdqn.train `
 - `checkpoint.pt`：网络、优化器和随机数状态。
 - `replay/`：持久化的 memory-efficient frame replay。
 - `resolved_config.json`：实际运行配置，并明确 target update 的计量单位。
+- `results/metrics.csv`：统一的 `step, return, loss, entropy, uncertainty, bonus` 紧凑表。
+- `results/config_used.yaml`：包含 CLI 覆盖后的实际配置、game、seed 和 device。
+- `results/summary.json`：最终 return、最佳 return、累计训练时间、seed 和最终 frame step。
+- `swanlog/`：仅在启用 SwanLab 时创建的本地缓存/离线日志。
 
 论文报告的主结果需要 3 个 seed，并按论文的 random/human baseline 做跨游戏归一化；一次短训练只能验证实现和学习管线，不能验证论文最终分数。
 
