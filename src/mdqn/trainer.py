@@ -13,7 +13,22 @@ import torch
 
 from mdqn.agent import DQNAgent, linearly_decaying_epsilon
 from mdqn.config import ExperimentConfig
+from mdqn.pp_agent import PosteriorPredictiveMDQNAgent
 from mdqn.replay import FrameReplayBuffer
+
+
+PP_LOG_METRICS = (
+    "posterior/loss",
+    "posterior/q_variance",
+    "posterior/policy_disagreement",
+    "policy/point_entropy",
+    "policy/pp_entropy",
+    "munchausen/point_clip_ratio",
+    "munchausen/pp_clip_ratio",
+    "munchausen/point_bonus_mean",
+    "munchausen/pp_bonus_mean",
+    "munchausen/bonus_difference",
+)
 
 
 class Trainer:
@@ -40,7 +55,12 @@ class Trainer:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-        self.agent = DQNAgent(
+        agent_class = (
+            PosteriorPredictiveMDQNAgent
+            if config.algorithm.name == "pp_mdqn"
+            else DQNAgent
+        )
+        self.agent = agent_class(
             environment.action_space.n,
             config.algorithm,
             stack_size=config.environment.stack_size,
@@ -59,6 +79,8 @@ class Trainer:
         self.iteration = 0
         self.recent_returns: deque[float] = deque(maxlen=100)
         self.last_metrics = None
+        self._diagnostic_sums = {name: 0.0 for name in PP_LOG_METRICS}
+        self._diagnostic_updates = 0
         if resume:
             self._load_checkpoint()
         self._write_config()
@@ -89,6 +111,12 @@ class Trainer:
             if self.agent_steps % train.update_period == 0:
                 batch = self.replay.sample(train.batch_size, self.device)
                 self.last_metrics = self.agent.update(batch)
+                if self.last_metrics.diagnostics:
+                    self._diagnostic_updates += 1
+                    for name in PP_LOG_METRICS:
+                        self._diagnostic_sums[name] += self.last_metrics.diagnostics[
+                            name
+                        ]
             # Official Dopamine order: optimize first, then hard-copy.
             if self.agent_steps % train.target_update_period == 0:
                 self.agent.hard_update_target()
@@ -189,33 +217,42 @@ class Trainer:
         last_100 = list(self.recent_returns)
         with path.open("a", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream)
+            header = [
+                "iteration",
+                "agent_steps",
+                "raw_frames",
+                "episodes",
+                "mean_return",
+                "last_100_mean_return",
+                "mean_length",
+                "agent_steps_per_second",
+                "loss",
+            ]
+            row = [
+                iteration,
+                self.agent_steps,
+                self.agent_steps * self.config.environment.frame_skip,
+                len(returns),
+                float(np.mean(returns)),
+                float(np.mean(last_100)),
+                float(np.mean(lengths)),
+                float(sum(lengths) / elapsed),
+                self.last_metrics.loss if self.last_metrics else "",
+            ]
+            if self.config.algorithm.name == "pp_mdqn":
+                header.extend(PP_LOG_METRICS)
+                if self._diagnostic_updates:
+                    row.extend(
+                        self._diagnostic_sums[name] / self._diagnostic_updates
+                        for name in PP_LOG_METRICS
+                    )
+                else:
+                    row.extend("" for _ in PP_LOG_METRICS)
             if new_file:
-                writer.writerow(
-                    [
-                        "iteration",
-                        "agent_steps",
-                        "raw_frames",
-                        "episodes",
-                        "mean_return",
-                        "last_100_mean_return",
-                        "mean_length",
-                        "agent_steps_per_second",
-                        "loss",
-                    ]
-                )
-            writer.writerow(
-                [
-                    iteration,
-                    self.agent_steps,
-                    self.agent_steps * self.config.environment.frame_skip,
-                    len(returns),
-                    float(np.mean(returns)),
-                    float(np.mean(last_100)),
-                    float(np.mean(lengths)),
-                    float(sum(lengths) / elapsed),
-                    self.last_metrics.loss if self.last_metrics else "",
-                ]
-            )
+                writer.writerow(header)
+            writer.writerow(row)
+        self._diagnostic_sums = {name: 0.0 for name in PP_LOG_METRICS}
+        self._diagnostic_updates = 0
 
     def _save_checkpoint(self) -> None:
         self.replay.flush()
@@ -230,6 +267,8 @@ class Trainer:
             "python_rng": random.getstate(),
             "torch_rng": torch.get_rng_state(),
         }
+        if torch.cuda.is_available():
+            checkpoint["torch_cuda_rng"] = torch.cuda.get_rng_state_all()
         torch.save(checkpoint, self.run_dir / "checkpoint.pt")
 
     def _load_checkpoint(self) -> None:
@@ -243,4 +282,10 @@ class Trainer:
         self.rng.bit_generator.state = checkpoint["exploration_rng"]
         np.random.set_state(checkpoint["numpy_rng"])
         random.setstate(checkpoint["python_rng"])
-        torch.set_rng_state(checkpoint["torch_rng"])
+        # map_location may move this CPU RNG tensor to CUDA together with the
+        # model checkpoint, but torch.set_rng_state requires a CPU ByteTensor.
+        torch.set_rng_state(checkpoint["torch_rng"].cpu())
+        if torch.cuda.is_available() and "torch_cuda_rng" in checkpoint:
+            torch.cuda.set_rng_state_all(
+                [state.cpu() for state in checkpoint["torch_cuda_rng"]]
+            )

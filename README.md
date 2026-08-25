@@ -82,6 +82,28 @@ conda run -n mdqn python -m mdqn.train `
 
 论文报告的主结果需要 3 个 seed，并按论文的 random/human baseline 做跨游戏归一化；一次短训练只能验证实现和学习管线，不能验证论文最终分数。
 
+## DQN、M-DQN 与 PP-MDQN
+
+`--algo` 可选 `dqn`、`mdqn`、`pp_mdqn`。PP-MDQN 使用 K 个 bootstrap last-layer heads 近似参数后验；行为策略仍是主 Q 网络的 epsilon-greedy，因此没有把 posterior sampling 混入探索策略。默认 `K=5`、bootstrap mask 概率 `0.8`，posterior target heads 与主 target network 在同一 hard target update 事件同步。
+
+四个可直接运行的示例：
+
+```powershell
+# DQN baseline
+conda run -n mdqn python -m mdqn.train --config configs/paper_atari.yaml --algo dqn --game Pong --seed 0 --device cuda --run-dir runs/dqn/pong/seed_0
+
+# 严格 hard-target M-DQN baseline
+conda run -n mdqn python -m mdqn.train --config configs/paper_atari.yaml --algo mdqn --game Pong --seed 0 --device cuda --run-dir runs/mdqn/pong/seed_0
+
+# PP-MDQN：只替换当前状态的 Munchausen bonus policy
+conda run -n mdqn python -m mdqn.train --config configs/paper_pp_mdqn.yaml --algo pp_mdqn --pp-scope munchausen_only --game Pong --seed 0 --device cuda --run-dir runs/pp_mdqn_munchausen_only/pong/seed_0
+
+# PP-MDQN：当前 bonus 与下一状态 soft operator 都使用 posterior-predictive policy
+conda run -n mdqn python -m mdqn.train --config configs/paper_pp_mdqn.yaml --algo pp_mdqn --pp-scope full_operator --game Pong --seed 0 --device cuda --run-dir runs/pp_mdqn_full_operator/pong/seed_0
+```
+
+算法定义、两种 scope 的公式和新增诊断指标见 [`docs/pp_mdqn.md`](docs/pp_mdqn.md)。PP-MDQN 是本文工程中的扩展方法，不应与原论文的严格 M-DQN 结果混称。
+
 ## 依据
 
 - [Munchausen Reinforcement Learning（NeurIPS 2020）](https://arxiv.org/abs/2007.14430)

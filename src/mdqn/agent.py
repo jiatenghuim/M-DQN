@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -19,6 +19,7 @@ class UpdateMetrics:
     target_mean: float
     munchausen_bonus_mean: float = 0.0
     entropy_mean: float = 0.0
+    diagnostics: dict[str, float] = field(default_factory=dict)
 
 
 class DQNAgent:
@@ -121,4 +122,3 @@ def linearly_decaying_epsilon(
     bonus = (1.0 - epsilon_final) * steps_left / decay_period
     bonus = float(np.clip(bonus, 0.0, 1.0 - epsilon_final))
     return epsilon_final + bonus
-

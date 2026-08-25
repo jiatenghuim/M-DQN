@@ -17,6 +17,10 @@ class AlgorithmConfig:
     learning_rate: float = 5e-5
     adam_epsilon: float = 0.0003125
     huber_delta: float = 1.0
+    num_posterior_heads: int = 5
+    bootstrap_prob: float = 0.8
+    pp_scope: str = "munchausen_only"
+    posterior_eps: float = 1e-8
 
 
 @dataclass(frozen=True)
@@ -53,14 +57,24 @@ class ExperimentConfig:
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
 
     def validate(self) -> None:
-        if self.algorithm.name not in {"mdqn", "dqn"}:
-            raise ValueError("algorithm.name must be 'mdqn' or 'dqn'")
+        if self.algorithm.name not in {"mdqn", "dqn", "pp_mdqn"}:
+            raise ValueError("algorithm.name must be 'dqn', 'mdqn', or 'pp_mdqn'")
         if not 0.0 <= self.algorithm.alpha <= 1.0:
             raise ValueError("alpha must be in [0, 1]")
         if self.algorithm.tau <= 0.0:
             raise ValueError("tau must be positive")
         if self.algorithm.log_policy_min >= 0.0:
             raise ValueError("log_policy_min must be negative")
+        if self.algorithm.num_posterior_heads <= 0:
+            raise ValueError("num_posterior_heads must be positive")
+        if not 0.0 < self.algorithm.bootstrap_prob <= 1.0:
+            raise ValueError("bootstrap_prob must be in (0, 1]")
+        if self.algorithm.pp_scope not in {"munchausen_only", "full_operator"}:
+            raise ValueError(
+                "pp_scope must be 'munchausen_only' or 'full_operator'"
+            )
+        if self.algorithm.posterior_eps <= 0.0:
+            raise ValueError("posterior_eps must be positive")
         if self.training.target_update != "hard":
             raise ValueError(
                 "The paper baseline only supports hard target updates; "
@@ -92,4 +106,3 @@ def load_config(path: str | Path) -> ExperimentConfig:
     )
     config.validate()
     return config
-

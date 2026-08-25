@@ -9,6 +9,7 @@ class NatureDQN(nn.Module):
 
     def __init__(self, num_actions: int, stack_size: int = 4) -> None:
         super().__init__()
+        self.feature_dim = 512
         # TF SAME padding is asymmetric for the 4x4, stride-2 convolution.
         self.features = nn.Sequential(
             nn.ZeroPad2d((2, 2, 2, 2)),
@@ -37,6 +38,22 @@ class NatureDQN(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
+        return self.q_from_features(self.encode(state))
+
+    def encode(self, state: torch.Tensor) -> torch.Tensor:
+        """Return the unchanged baseline network's penultimate features."""
         # Replay observations remain uint8 until transfer to the accelerator.
         state = state.to(dtype=torch.float32) / 255.0
-        return self.head(self.features(state))
+        features = self.features(state)
+        features = self.head[0](features)
+        features = self.head[1](features)
+        return self.head[2](features)
+
+    def q_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        return self.head[3](features)
+
+    def forward_with_features(
+        self, state: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        features = self.encode(state)
+        return self.q_from_features(features), features
