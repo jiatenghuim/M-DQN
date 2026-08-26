@@ -20,6 +20,11 @@ def test_debug_config_and_breakout_are_cli_defaults() -> None:
     assert args.run_dir is None
 
 
+def test_app_mdqn_is_a_cli_algorithm_choice() -> None:
+    args = build_parser().parse_args(["--algo", "app_mdqn"])
+    assert args.algo == "app_mdqn"
+
+
 def test_frames_and_agent_steps_are_mutually_exclusive() -> None:
     parser = build_parser()
     try:

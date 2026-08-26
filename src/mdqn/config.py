@@ -24,6 +24,12 @@ class AlgorithmConfig:
 
 
 @dataclass(frozen=True)
+class AdaptivePPConfig:
+    uncertainty_calibration_updates: int = 10_000
+    adaptive_eps: float = 1e-8
+
+
+@dataclass(frozen=True)
 class TrainingConfig:
     total_agent_steps: int = 50_000_000
     # Optional raw-frame budget. When present it is converted using frame_skip.
@@ -57,12 +63,16 @@ class EnvironmentConfig:
 @dataclass(frozen=True)
 class ExperimentConfig:
     algorithm: AlgorithmConfig = field(default_factory=AlgorithmConfig)
+    adaptive_pp: AdaptivePPConfig = field(default_factory=AdaptivePPConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
 
     def validate(self) -> None:
-        if self.algorithm.name not in {"mdqn", "dqn", "pp_mdqn"}:
-            raise ValueError("algorithm.name must be 'dqn', 'mdqn', or 'pp_mdqn'")
+        if self.algorithm.name not in {"mdqn", "dqn", "pp_mdqn", "app_mdqn"}:
+            raise ValueError(
+                "algorithm.name must be 'dqn', 'mdqn', 'pp_mdqn', or "
+                "'app_mdqn'"
+            )
         if not 0.0 <= self.algorithm.alpha <= 1.0:
             raise ValueError("alpha must be in [0, 1]")
         if self.algorithm.tau <= 0.0:
@@ -79,6 +89,15 @@ class ExperimentConfig:
             )
         if self.algorithm.posterior_eps <= 0.0:
             raise ValueError("posterior_eps must be positive")
+        if (
+            self.algorithm.name == "app_mdqn"
+            and self.algorithm.pp_scope != "munchausen_only"
+        ):
+            raise ValueError("app_mdqn currently supports munchausen_only only")
+        if self.adaptive_pp.uncertainty_calibration_updates <= 0:
+            raise ValueError("uncertainty_calibration_updates must be positive")
+        if self.adaptive_pp.adaptive_eps <= 0.0:
+            raise ValueError("adaptive_eps must be positive")
         if self.training.target_update != "hard":
             raise ValueError(
                 "The paper baseline only supports hard target updates; "
@@ -127,6 +146,7 @@ def load_config(path: str | Path) -> ExperimentConfig:
         )
     config = ExperimentConfig(
         algorithm=AlgorithmConfig(**raw.get("algorithm", {})),
+        adaptive_pp=AdaptivePPConfig(**raw.get("adaptive_pp", {})),
         training=training,
         environment=environment,
     )

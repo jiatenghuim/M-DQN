@@ -21,6 +21,20 @@ def test_pp_mdqn_defaults_are_valid() -> None:
     assert config.algorithm.pp_scope == "munchausen_only"
 
 
+def test_app_mdqn_defaults_are_valid_and_full_operator_is_rejected() -> None:
+    config = ExperimentConfig()
+    config = replace(config, algorithm=replace(config.algorithm, name="app_mdqn"))
+    config.validate()
+    assert config.adaptive_pp.uncertainty_calibration_updates == 10_000
+    assert config.adaptive_pp.adaptive_eps == 1e-8
+
+    invalid = replace(
+        config, algorithm=replace(config.algorithm, pp_scope="full_operator")
+    )
+    with pytest.raises(ValueError, match="munchausen_only"):
+        invalid.validate()
+
+
 def test_debug_config_is_exactly_500k_raw_frames() -> None:
     config = load_config("configs/debug_pp_mdqn.yaml")
     assert config.training.total_frames == 500_000

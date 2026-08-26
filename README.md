@@ -90,6 +90,27 @@ SwanLab 中记录以下曲线：
 
 其中 `mean_td_error` 是 batch mean absolute TD error；`point_munchausen_bonus` 和 `pp_munchausen_bonus` 是裁剪前的 `alpha * tau * log pi`，另以 `actual_*_munchausen_bonus` 记录真正进入 target 的裁剪后值。DQN 不伪造 Munchausen/posterior 指标，M-DQN 不调用或记录 PP policy，只有 PP-MDQN 具备完整机制指标。
 
+## APP-MDQN 自适应实验
+
+APP-MDQN 只把当前状态 Munchausen bonus 的 policy 改为 point policy 与
+posterior-predictive policy 的 uncertainty-adaptive 插值。前 10,000 次 learner
+update 使用 `lambda=1` 校准 disagreement 尺度；校准完成后 reference 永久冻结。
+下一状态 soft Bellman operator 仍严格使用 M-DQN point target policy，环境交互仍为
+`epsilon-greedy(main online Q)`。
+
+第一轮 2M-frame 实验：
+
+```powershell
+conda activate mdqn
+python -m mdqn.train --config configs/debug_pp_mdqn.yaml --algo app_mdqn --pp-scope munchausen_only --game Breakout --seed 0 --frames 2000000 --device cuda --use-swanlab
+```
+
+实验名为 `app_mdqn_m_only_Breakout_seed0`。SwanLab 重点观察
+`adaptive/lambda_mean`、`adaptive/uncertainty_reference`、
+`adaptive/calibration_complete`、三种 policy entropy、三种 Munchausen bonus、
+`posterior/policy_disagreement` 和 `adaptive/point_pp_policy_distance`。公式、隔离边界和
+checkpoint 状态详见 [`docs/app_mdqn.md`](docs/app_mdqn.md)。
+
 ## 正式论文实验
 
 完整论文配置（单个游戏、单个 seed）：
@@ -132,9 +153,9 @@ conda run -n mdqn python -m mdqn.train `
 
 论文报告的主结果需要 3 个 seed，并按论文的 random/human baseline 做跨游戏归一化；一次短训练只能验证实现和学习管线，不能验证论文最终分数。
 
-## DQN、M-DQN 与 PP-MDQN
+## DQN、M-DQN、PP-MDQN 与 APP-MDQN
 
-`--algo` 可选 `dqn`、`mdqn`、`pp_mdqn`。PP-MDQN 使用 K 个 bootstrap last-layer heads 近似参数后验；行为策略仍是主 Q 网络的 epsilon-greedy，因此没有把 posterior sampling 混入探索策略。默认 `K=5`、bootstrap mask 概率 `0.8`，posterior target heads 与主 target network 在同一 hard target update 事件同步。
+`--algo` 可选 `dqn`、`mdqn`、`pp_mdqn`、`app_mdqn`。PP-MDQN 和 APP-MDQN 使用 K 个 bootstrap last-layer heads 近似参数后验；行为策略仍是主 Q 网络的 epsilon-greedy，因此没有把 posterior sampling 混入探索策略。默认 `K=5`、bootstrap mask 概率 `0.8`，posterior target heads 与主 target network 在同一 hard target update 事件同步。
 
 四个可直接运行的示例：
 

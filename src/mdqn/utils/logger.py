@@ -32,9 +32,9 @@ def make_experiment_name(
 ) -> str:
     game_name = game.removeprefix("ALE/").removesuffix("-v5")
     game_name = re.sub(r"[^A-Za-z0-9_-]+", "_", game_name)
-    if algorithm == "pp_mdqn":
+    if algorithm in {"pp_mdqn", "app_mdqn"}:
         scope = "m_only" if pp_scope == "munchausen_only" else "full_operator"
-        prefix = f"pp_mdqn_{scope}"
+        prefix = f"{algorithm}_{scope}"
     else:
         prefix = algorithm
     return f"{prefix}_{game_name}_seed{seed}"
@@ -88,6 +88,9 @@ class SwanLabExperimentLogger:
             "mode": mode,
             "resume": "never",
         }
+        settings_factory = getattr(self._swanlab, "Settings", None)
+        if settings_factory is not None:
+            init_kwargs["settings"] = settings_factory(probe={"monitor": False})
         if resume:
             if not run_id_path.exists():
                 raise FileNotFoundError(

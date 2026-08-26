@@ -44,6 +44,9 @@ def test_experiment_names_are_comparison_friendly() -> None:
     assert make_experiment_name(
         "pp_mdqn", "Breakout", 0, "munchausen_only"
     ) == "pp_mdqn_m_only_Breakout_seed0"
+    assert make_experiment_name(
+        "app_mdqn", "Breakout", 0, "munchausen_only"
+    ) == "app_mdqn_m_only_Breakout_seed0"
 
 
 def test_swanlab_wrapper_initializes_logs_and_resumes(tmp_path) -> None:

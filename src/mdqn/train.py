@@ -15,7 +15,7 @@ from mdqn.utils.logger import create_experiment_logger, make_experiment_name
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train PyTorch DQN, M-DQN, or PP-MDQN"
+        description="Train PyTorch DQN, M-DQN, PP-MDQN, or APP-MDQN"
     )
     parser.add_argument("--config", default="configs/debug_pp_mdqn.yaml")
     parser.add_argument("--game", default="Breakout")
@@ -23,7 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--algo", choices=("dqn", "mdqn", "pp_mdqn"))
+    parser.add_argument(
+        "--algo", choices=("dqn", "mdqn", "pp_mdqn", "app_mdqn")
+    )
     parser.add_argument(
         "--pp-scope",
         "--pp_scope",
@@ -123,12 +125,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     posterior_heads = (
         config.algorithm.num_posterior_heads
-        if config.algorithm.name == "pp_mdqn"
+        if config.algorithm.name in {"pp_mdqn", "app_mdqn"}
         else 0
     )
     displayed_scope = (
         config.algorithm.pp_scope
-        if config.algorithm.name == "pp_mdqn"
+        if config.algorithm.name in {"pp_mdqn", "app_mdqn"}
         else "not_applicable"
     )
     print(

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from mdqn.agent import DQNAgent, linearly_decaying_epsilon
+from mdqn.app_agent import AdaptivePosteriorPredictiveMDQNAgent
 from mdqn.config import ExperimentConfig
 from mdqn.pp_agent import PosteriorPredictiveMDQNAgent
 from mdqn.replay import FrameReplayBuffer
@@ -33,6 +34,25 @@ PP_LOG_METRICS = (
     "munchausen/bonus_difference",
 )
 
+APP_LOG_METRICS = PP_LOG_METRICS + (
+    "adaptive/lambda_mean",
+    "adaptive/lambda_std",
+    "adaptive/lambda_min",
+    "adaptive/lambda_max",
+    "adaptive/uncertainty_reference",
+    "adaptive/calibration_complete",
+    "adaptive/calibration_update_count",
+    "policy/adaptive_entropy",
+    "munchausen/adaptive_bonus_mean",
+    "adaptive/point_pp_policy_distance",
+)
+
+LATEST_TRAINING_METRICS = {
+    "adaptive/uncertainty_reference",
+    "adaptive/calibration_complete",
+    "adaptive/calibration_update_count",
+}
+
 SWAN_DIAGNOSTIC_NAMES = {
     "policy/point_entropy": "point_policy_entropy",
     "policy/pp_entropy": "posterior_predictive_entropy",
@@ -50,13 +70,19 @@ SWAN_DIAGNOSTIC_NAMES = {
 }
 
 
-def training_metric_payload(metrics) -> dict[str, float]:
+def training_metric_payload(
+    metrics, algorithm: str | None = None
+) -> dict[str, float]:
     payload = {
         "loss/q_loss": metrics.loss,
         "mean_q_value": metrics.q_mean,
         "max_q_value": metrics.max_q_value,
         "mean_td_error": metrics.mean_td_error,
     }
+    if algorithm == "app_mdqn":
+        # APP-MDQN exposes the requested namespaced mechanism metrics while
+        # retaining the established flat aliases for cross-run dashboards.
+        payload.update(metrics.diagnostics)
     for internal_name, external_name in SWAN_DIAGNOSTIC_NAMES.items():
         if internal_name in metrics.diagnostics:
             payload[external_name] = metrics.diagnostics[internal_name]
@@ -79,6 +105,12 @@ def validate_algorithm_isolation(algorithm: str, agent: DQNAgent) -> None:
     elif algorithm == "pp_mdqn":
         if not isinstance(agent, PosteriorPredictiveMDQNAgent) or not has_posterior:
             raise RuntimeError("pp_mdqn requires online and target posterior heads")
+    elif algorithm == "app_mdqn":
+        if (
+            not isinstance(agent, AdaptivePosteriorPredictiveMDQNAgent)
+            or not has_posterior
+        ):
+            raise RuntimeError("app_mdqn requires adaptive and posterior state")
     else:
         raise ValueError(f"unknown algorithm: {algorithm}")
 
@@ -113,17 +145,28 @@ class Trainer:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-        agent_class = (
-            PosteriorPredictiveMDQNAgent
-            if config.algorithm.name == "pp_mdqn"
-            else DQNAgent
-        )
-        self.agent = agent_class(
-            environment.action_space.n,
-            config.algorithm,
-            stack_size=config.environment.stack_size,
-            device=self.device,
-        )
+        if config.algorithm.name == "pp_mdqn":
+            self.agent = PosteriorPredictiveMDQNAgent(
+                environment.action_space.n,
+                config.algorithm,
+                stack_size=config.environment.stack_size,
+                device=self.device,
+            )
+        elif config.algorithm.name == "app_mdqn":
+            self.agent = AdaptivePosteriorPredictiveMDQNAgent(
+                environment.action_space.n,
+                config.algorithm,
+                config.adaptive_pp,
+                stack_size=config.environment.stack_size,
+                device=self.device,
+            )
+        else:
+            self.agent = DQNAgent(
+                environment.action_space.n,
+                config.algorithm,
+                stack_size=config.environment.stack_size,
+                device=self.device,
+            )
         validate_algorithm_isolation(config.algorithm.name, self.agent)
         self.replay = FrameReplayBuffer(
             config.training.replay_capacity,
@@ -138,9 +181,18 @@ class Trainer:
         self.iteration = 0
         self.recent_returns: deque[float] = deque(maxlen=100)
         self.last_metrics = None
-        self._diagnostic_sums = {name: 0.0 for name in PP_LOG_METRICS}
+        if config.algorithm.name == "pp_mdqn":
+            self._diagnostic_metric_names = PP_LOG_METRICS
+        elif config.algorithm.name == "app_mdqn":
+            self._diagnostic_metric_names = APP_LOG_METRICS
+        else:
+            self._diagnostic_metric_names = ()
+        self._diagnostic_sums = {
+            name: 0.0 for name in self._diagnostic_metric_names
+        }
         self._diagnostic_updates = 0
         self._training_metric_sums: dict[str, float] = {}
+        self._training_metric_latest: dict[str, float] = {}
         self._training_metric_updates = 0
         self._latest_compact_metrics: dict[str, float] = {}
         self._iteration_phase_steps = 0
@@ -197,18 +249,23 @@ class Trainer:
             if self.agent_steps % train.update_period == 0:
                 batch = self.replay.sample(train.batch_size, self.device)
                 self.last_metrics = self.agent.update(batch)
-                payload = training_metric_payload(self.last_metrics)
+                payload = training_metric_payload(
+                    self.last_metrics, self.config.algorithm.name
+                )
                 self._training_metric_updates += 1
                 for name, value in payload.items():
-                    self._training_metric_sums[name] = (
-                        self._training_metric_sums.get(name, 0.0) + value
-                    )
+                    if name in LATEST_TRAINING_METRICS:
+                        self._training_metric_latest[name] = value
+                    else:
+                        self._training_metric_sums[name] = (
+                            self._training_metric_sums.get(name, 0.0) + value
+                        )
                 if (
-                    self.config.algorithm.name == "pp_mdqn"
+                    self.config.algorithm.name in {"pp_mdqn", "app_mdqn"}
                     and self.last_metrics.diagnostics
                 ):
                     self._diagnostic_updates += 1
-                    for name in PP_LOG_METRICS:
+                    for name in self._diagnostic_metric_names:
                         self._diagnostic_sums[name] += self.last_metrics.diagnostics[
                             name
                         ]
@@ -229,6 +286,7 @@ class Trainer:
             name: value / self._training_metric_updates
             for name, value in self._training_metric_sums.items()
         }
+        averaged.update(self._training_metric_latest)
         averaged["global_step"] = raw_frames
         self.experiment_logger.log(averaged, step=raw_frames)
         self._latest_compact_metrics = averaged
@@ -237,16 +295,19 @@ class Trainer:
             episode_return=None,
             loss=averaged.get("loss/q_loss"),
             entropy=self._selected_entropy(averaged),
-            uncertainty=averaged.get("posterior_q_variance"),
+            uncertainty=self._selected_uncertainty(averaged),
             bonus=self._selected_bonus(averaged),
         )
         self._training_metric_sums = {}
+        self._training_metric_latest = {}
         self._training_metric_updates = 0
         self._next_metrics_frame = next_frame_boundary(
             raw_frames, self.config.training.metrics_log_period_frames
         )
 
     def _selected_entropy(self, metrics: dict[str, float]) -> float | None:
+        if self.config.algorithm.name == "app_mdqn":
+            return metrics.get("policy/adaptive_entropy")
         if self.config.algorithm.name == "pp_mdqn":
             return metrics.get("posterior_predictive_entropy")
         if self.config.algorithm.name == "mdqn":
@@ -254,11 +315,20 @@ class Trainer:
         return None
 
     def _selected_bonus(self, metrics: dict[str, float]) -> float | None:
+        if self.config.algorithm.name == "app_mdqn":
+            return metrics.get("munchausen/adaptive_bonus_mean")
         if self.config.algorithm.name == "pp_mdqn":
             return metrics.get("actual_pp_munchausen_bonus")
         if self.config.algorithm.name == "mdqn":
             return metrics.get("actual_point_munchausen_bonus")
         return None
+
+    def _selected_uncertainty(
+        self, metrics: dict[str, float]
+    ) -> float | None:
+        if self.config.algorithm.name == "app_mdqn":
+            return metrics.get("posterior/q_variance")
+        return metrics.get("posterior_q_variance")
 
     def _run_episode(self) -> tuple[int, float]:
         initial_seed = self.seed if self.agent_steps == 0 and self.episode_number == 0 else None
@@ -414,7 +484,7 @@ class Trainer:
             episode_return=episode_return,
             loss=latest.get("loss/q_loss"),
             entropy=self._selected_entropy(latest),
-            uncertainty=latest.get("posterior_q_variance"),
+            uncertainty=self._selected_uncertainty(latest),
             bonus=self._selected_bonus(latest),
         )
 
@@ -448,19 +518,21 @@ class Trainer:
                 float(sum(lengths) / elapsed),
                 self.last_metrics.loss if self.last_metrics else "",
             ]
-            if self.config.algorithm.name == "pp_mdqn":
-                header.extend(PP_LOG_METRICS)
+            if self._diagnostic_metric_names:
+                header.extend(self._diagnostic_metric_names)
                 if self._diagnostic_updates:
                     row.extend(
                         self._diagnostic_sums[name] / self._diagnostic_updates
-                        for name in PP_LOG_METRICS
+                        for name in self._diagnostic_metric_names
                     )
                 else:
-                    row.extend("" for _ in PP_LOG_METRICS)
+                    row.extend("" for _ in self._diagnostic_metric_names)
             if new_file:
                 writer.writerow(header)
             writer.writerow(row)
-        self._diagnostic_sums = {name: 0.0 for name in PP_LOG_METRICS}
+        self._diagnostic_sums = {
+            name: 0.0 for name in self._diagnostic_metric_names
+        }
         self._diagnostic_updates = 0
 
     def _save_checkpoint(self) -> None:
@@ -479,6 +551,7 @@ class Trainer:
             "diagnostic_sums": self._diagnostic_sums,
             "diagnostic_updates": self._diagnostic_updates,
             "training_metric_sums": self._training_metric_sums,
+            "training_metric_latest": self._training_metric_latest,
             "training_metric_updates": self._training_metric_updates,
             "latest_compact_metrics": self._latest_compact_metrics,
             "agent": self.agent.state_dict(),
@@ -518,6 +591,9 @@ class Trainer:
         self._diagnostic_updates = int(checkpoint.get("diagnostic_updates", 0))
         self._training_metric_sums = dict(
             checkpoint.get("training_metric_sums", {})
+        )
+        self._training_metric_latest = dict(
+            checkpoint.get("training_metric_latest", {})
         )
         self._training_metric_updates = int(
             checkpoint.get("training_metric_updates", 0)

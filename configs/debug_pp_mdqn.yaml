@@ -12,6 +12,10 @@ algorithm:
   pp_scope: munchausen_only
   posterior_eps: 0.00000001
 
+adaptive_pp:
+  uncertainty_calibration_updates: 10000
+  adaptive_eps: 0.00000001
+
 training:
   # 500,000 raw Atari frames / frame_skip 4 = 125,000 agent steps.
   total_frames: 500000
