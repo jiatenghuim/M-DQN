@@ -6,7 +6,11 @@ import json
 import yaml
 
 from mdqn.agent import UpdateMetrics
-from mdqn.trainer import next_frame_boundary, training_metric_payload
+from mdqn.trainer import (
+    next_frame_boundary,
+    target_steps_since_update,
+    training_metric_payload,
+)
 from mdqn.utils.logger import SwanLabExperimentLogger, make_experiment_name
 from mdqn.utils.results import RESULT_COLUMNS, ResultsExporter
 
@@ -38,15 +42,12 @@ class _FakeSwanLab:
 
 
 def test_experiment_names_are_comparison_friendly() -> None:
-    assert make_experiment_name("mdqn", "Breakout", 0, "munchausen_only") == (
+    assert make_experiment_name("mdqn", "Breakout", 0) == (
         "mdqn_Breakout_seed0"
     )
-    assert make_experiment_name(
-        "pp_mdqn", "Breakout", 0, "munchausen_only"
-    ) == "pp_mdqn_m_only_Breakout_seed0"
-    assert make_experiment_name(
-        "app_mdqn", "Breakout", 0, "munchausen_only"
-    ) == "app_mdqn_m_only_Breakout_seed0"
+    assert make_experiment_name("rg_mdqn", "Breakout", 0) == (
+        "rg_mdqn_Breakout_seed0"
+    )
 
 
 def test_swanlab_wrapper_initializes_logs_and_resumes(tmp_path) -> None:
@@ -58,7 +59,7 @@ def test_swanlab_wrapper_initializes_logs_and_resumes(tmp_path) -> None:
         mode="offline",
         swanlab_module=fake,
     )
-    assert fake.init_calls[0]["project"] == "PP-MDQN"
+    assert fake.init_calls[0]["project"] == "RG-MDQN"
     assert fake.init_calls[0]["resume"] == "never"
     logger.log({"episode_return": 1.0, "global_step": 100}, step=100)
     assert fake.runs[0].logs == [
@@ -116,7 +117,6 @@ def test_training_metric_names_and_frame_boundaries() -> None:
             target_mean=3.0,
             max_q_value=4.0,
             mean_td_error=5.0,
-            diagnostics={"posterior/q_variance": 0.25},
         )
     )
     assert payload == {
@@ -124,7 +124,39 @@ def test_training_metric_names_and_frame_boundaries() -> None:
         "mean_q_value": 2.0,
         "max_q_value": 4.0,
         "mean_td_error": 5.0,
-        "posterior_q_variance": 0.25,
     }
     assert next_frame_boundary(0, 50_000) == 50_000
     assert next_frame_boundary(50_000, 50_000) == 100_000
+    assert target_steps_since_update(24_004, 24_000) == 4
+
+
+def test_rg_training_metrics_preserve_required_swanlab_names() -> None:
+    diagnostics = {
+        "reducibility/online_base_loss_mean": 0.8,
+        "reducibility/target_base_loss_mean": 0.3,
+        "reducibility/reducible_loss_mean": 0.5,
+        "reducibility/gate_mean": 0.625,
+        "reducibility/gate_std": 0.1,
+        "reducibility/gate_min": 0.4,
+        "reducibility/gate_max": 0.8,
+        "reducibility/positive_fraction": 0.75,
+        "reducibility/gate_zero_fraction": 0.25,
+        "reducibility/mean_abs_base_td_error": 1.2,
+        "munchausen/full_bonus_mean": -0.7,
+        "munchausen/gated_bonus_mean": -0.4,
+        "munchausen/bonus_attenuation_mean": 0.625,
+        "munchausen/point_policy_entropy": 0.2,
+        "munchausen/full_clip_ratio": 0.1,
+    }
+    payload = training_metric_payload(
+        UpdateMetrics(
+            loss=1.0,
+            q_mean=2.0,
+            target_mean=3.0,
+            max_q_value=4.0,
+            mean_td_error=5.0,
+            diagnostics=diagnostics,
+        ),
+        algorithm="rg_mdqn",
+    )
+    assert diagnostics.items() <= payload.items()

@@ -64,68 +64,81 @@ def munchausen_target(
 
 
 @torch.no_grad()
-def posterior_predictive_munchausen_target(
+def mdqn_base_target(
+    rewards: torch.Tensor,
+    dones: torch.Tensor,
+    target_q_next: torch.Tensor,
+    *,
+    gamma: float = 0.99,
+    tau: float = 0.03,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """M-DQN next-state soft target without a current-state bonus."""
+    next_scaled_log_policy = scaled_log_softmax(target_q_next, tau)
+    next_policy = torch.softmax(target_q_next / tau, dim=-1)
+    soft_next_value = (
+        next_policy * (target_q_next - next_scaled_log_policy)
+    ).sum(dim=-1)
+    base_target = rewards + gamma * (
+        1.0 - dones.to(dtype=rewards.dtype)
+    ) * soft_next_value
+    diagnostics = {
+        "soft_next_value": soft_next_value,
+        "next_policy_entropy": -(
+            next_policy * (next_scaled_log_policy / tau)
+        ).sum(dim=-1),
+    }
+    return base_target, diagnostics
+
+
+@torch.no_grad()
+def reducibility_gated_munchausen_target(
     rewards: torch.Tensor,
     actions: torch.Tensor,
     dones: torch.Tensor,
     target_q_current: torch.Tensor,
     target_q_next: torch.Tensor,
-    pp_policy_current: torch.Tensor,
+    gate: torch.Tensor,
     *,
-    pp_policy_next: torch.Tensor | None = None,
-    pp_scope: str = "munchausen_only",
     gamma: float = 0.99,
     tau: float = 0.03,
     alpha: float = 0.9,
     log_policy_min: float = -1.0,
-    eps: float = 1e-8,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """PP-MDQN target with PP policy controlling policy terms only.
+    """Apply a detached per-transition gate to the current M-DQN bonus."""
+    if gate.shape != rewards.shape:
+        raise ValueError("gate must have shape [batch]")
+    if not torch.isfinite(gate).all():
+        raise FloatingPointError("gate must be finite")
+    if not ((gate >= 0.0) & (gate <= 1.0)).all():
+        raise ValueError("gate must be in [0, 1]")
 
-    The main target Q network remains the value estimator. In
-    ``munchausen_only`` only the current-state bonus uses the PP policy. In
-    ``full_operator`` the next-state entropy-regularized policy also uses it.
-    """
-    if pp_scope not in {"munchausen_only", "full_operator"}:
-        raise ValueError("unknown pp_scope")
-    if eps <= 0.0:
-        raise ValueError("eps must be positive")
-
-    pp_log_current = torch.log(pp_policy_current.clamp_min(eps))
-    pp_scaled_log_current = tau * pp_log_current
-    chosen_pp_log_policy = pp_scaled_log_current.gather(
+    base_target, base_diagnostics = mdqn_base_target(
+        rewards,
+        dones,
+        target_q_next,
+        gamma=gamma,
+        tau=tau,
+    )
+    current_scaled_log_policy = scaled_log_softmax(target_q_current, tau)
+    current_policy = torch.softmax(target_q_current / tau, dim=-1)
+    chosen_unclipped_log_policy = current_scaled_log_policy.gather(
         1, actions.long().unsqueeze(1)
     ).squeeze(1)
-    chosen_pp_log_policy = chosen_pp_log_policy.clamp(
+    chosen_log_policy = chosen_unclipped_log_policy.clamp(
         min=log_policy_min, max=0.0
     )
-    munchausen_bonus = alpha * chosen_pp_log_policy
-
-    if pp_scope == "munchausen_only":
-        next_scaled_log_policy = scaled_log_softmax(target_q_next, tau)
-        next_policy = torch.softmax(target_q_next / tau, dim=-1)
-    else:
-        if pp_policy_next is None:
-            raise ValueError("full_operator requires pp_policy_next")
-        next_policy = pp_policy_next
-        next_scaled_log_policy = tau * torch.log(next_policy.clamp_min(eps))
-
-    soft_next_value = (
-        next_policy * (target_q_next - next_scaled_log_policy)
-    ).sum(dim=-1)
-    target = (
-        rewards
-        + munchausen_bonus
-        + gamma
-        * (1.0 - dones.to(dtype=rewards.dtype))
-        * soft_next_value
-    )
+    full_bonus = alpha * chosen_log_policy
+    gated_bonus = gate.detach() * full_bonus
+    target = base_target + gated_bonus
     diagnostics = {
-        "munchausen_bonus": munchausen_bonus,
-        "soft_next_value": soft_next_value,
-        "entropy": -(
-            next_policy * (next_scaled_log_policy / tau)
+        **base_diagnostics,
+        "base_target": base_target,
+        "full_bonus": full_bonus,
+        "gated_bonus": gated_bonus,
+        "point_policy_entropy": -(
+            current_policy * (current_scaled_log_policy / tau)
         ).sum(dim=-1),
+        "full_clip_mask": chosen_unclipped_log_policy < log_policy_min,
     }
     return target, diagnostics
 

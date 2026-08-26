@@ -15,26 +15,17 @@ from mdqn.utils.logger import create_experiment_logger, make_experiment_name
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train PyTorch DQN, M-DQN, PP-MDQN, or APP-MDQN"
+        description="Train PyTorch DQN, M-DQN, or RG-MDQN"
     )
-    parser.add_argument("--config", default="configs/debug_pp_mdqn.yaml")
+    parser.add_argument("--config", default="configs/debug_rg_mdqn.yaml")
     parser.add_argument("--game", default="Breakout")
     parser.add_argument("--run-dir")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
-        "--algo", choices=("dqn", "mdqn", "pp_mdqn", "app_mdqn")
+        "--algo", choices=("dqn", "mdqn", "rg_mdqn")
     )
-    parser.add_argument(
-        "--pp-scope",
-        "--pp_scope",
-        dest="pp_scope",
-        choices=("munchausen_only", "full_operator"),
-    )
-    parser.add_argument("--num-posterior-heads", type=int)
-    parser.add_argument("--bootstrap-prob", type=float)
-    parser.add_argument("--posterior-eps", type=float)
     budget = parser.add_mutually_exclusive_group()
     budget.add_argument("--frames", type=int)
     budget.add_argument("--total-agent-steps", type=int)
@@ -65,16 +56,6 @@ def main(argv: list[str] | None = None) -> None:
     algorithm = config.algorithm
     if args.algo is not None:
         algorithm = replace(algorithm, name=args.algo)
-    if args.pp_scope is not None:
-        algorithm = replace(algorithm, pp_scope=args.pp_scope)
-    if args.num_posterior_heads is not None:
-        algorithm = replace(
-            algorithm, num_posterior_heads=args.num_posterior_heads
-        )
-    if args.bootstrap_prob is not None:
-        algorithm = replace(algorithm, bootstrap_prob=args.bootstrap_prob)
-    if args.posterior_eps is not None:
-        algorithm = replace(algorithm, posterior_eps=args.posterior_eps)
     training = config.training
     try:
         if args.frames is not None:
@@ -110,7 +91,6 @@ def main(argv: list[str] | None = None) -> None:
         config.algorithm.name,
         args.game,
         args.seed,
-        config.algorithm.pp_scope,
     )
     if args.run_dir is None:
         if args.resume:
@@ -123,21 +103,10 @@ def main(argv: list[str] | None = None) -> None:
     actual_frames = (
         config.training.total_agent_steps * config.environment.frame_skip
     )
-    posterior_heads = (
-        config.algorithm.num_posterior_heads
-        if config.algorithm.name in {"pp_mdqn", "app_mdqn"}
-        else 0
-    )
-    displayed_scope = (
-        config.algorithm.pp_scope
-        if config.algorithm.name in {"pp_mdqn", "app_mdqn"}
-        else "not_applicable"
-    )
     print(
         "experiment "
         f"algorithm={config.algorithm.name} game={args.game} seed={args.seed} "
-        f"frames={actual_frames} posterior_heads={posterior_heads} "
-        f"pp_scope={displayed_scope} device={args.device} run_dir={run_dir}",
+        f"frames={actual_frames} device={args.device} run_dir={run_dir}",
         flush=True,
     )
 

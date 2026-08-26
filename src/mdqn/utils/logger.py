@@ -27,17 +27,10 @@ class NullExperimentLogger:
         return None
 
 
-def make_experiment_name(
-    algorithm: str, game: str, seed: int, pp_scope: str
-) -> str:
+def make_experiment_name(algorithm: str, game: str, seed: int) -> str:
     game_name = game.removeprefix("ALE/").removesuffix("-v5")
     game_name = re.sub(r"[^A-Za-z0-9_-]+", "_", game_name)
-    if algorithm in {"pp_mdqn", "app_mdqn"}:
-        scope = "m_only" if pp_scope == "munchausen_only" else "full_operator"
-        prefix = f"{algorithm}_{scope}"
-    else:
-        prefix = algorithm
-    return f"{prefix}_{game_name}_seed{seed}"
+    return f"{algorithm}_{game_name}_seed{seed}"
 
 
 class SwanLabExperimentLogger:
@@ -81,7 +74,7 @@ class SwanLabExperimentLogger:
         run_dir.mkdir(parents=True, exist_ok=True)
         run_id_path = run_dir / "swanlab_run_id.txt"
         init_kwargs: dict[str, Any] = {
-            "project": "PP-MDQN",
+            "project": "RG-MDQN",
             "experiment_name": experiment_name,
             "config": dict(config),
             "logdir": str(run_dir / "swanlog"),

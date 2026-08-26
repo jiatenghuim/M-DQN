@@ -1,20 +1,26 @@
-"""Paper-faithful PyTorch implementation of Munchausen DQN."""
+"""Paper-faithful PyTorch M-DQN and reducibility-gated extension."""
 
-from mdqn.adaptive import adaptive_lambda, adaptive_policy
-from mdqn.algorithm import munchausen_target, scaled_log_softmax
+from mdqn.algorithm import (
+    mdqn_base_target,
+    munchausen_target,
+    reducibility_gated_munchausen_target,
+    scaled_log_softmax,
+)
 from mdqn.networks import NatureDQN
-from mdqn.posterior import (
-    BootstrapLastLayerEnsemble,
-    posterior_predictive_policy,
+from mdqn.reducibility import (
+    huber_loss_per_sample,
+    reducibility_gate,
+    reducible_loss,
 )
 
 __all__ = [
-    "BootstrapLastLayerEnsemble",
     "NatureDQN",
-    "adaptive_lambda",
-    "adaptive_policy",
+    "huber_loss_per_sample",
+    "mdqn_base_target",
     "munchausen_target",
-    "posterior_predictive_policy",
+    "reducibility_gate",
+    "reducibility_gated_munchausen_target",
+    "reducible_loss",
     "scaled_log_softmax",
 ]
 __version__ = "0.1.0"

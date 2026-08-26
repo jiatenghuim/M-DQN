@@ -1,5 +1,5 @@
 algorithm:
-  name: pp_mdqn
+  name: rg_mdqn
   gamma: 0.99
   tau: 0.03
   alpha: 0.9
@@ -7,14 +7,6 @@ algorithm:
   learning_rate: 0.00005
   adam_epsilon: 0.0003125
   huber_delta: 1.0
-  num_posterior_heads: 5
-  bootstrap_prob: 0.8
-  pp_scope: munchausen_only
-  posterior_eps: 0.00000001
-
-adaptive_pp:
-  uncertainty_calibration_updates: 10000
-  adaptive_eps: 0.00000001
 
 training:
   # 500,000 raw Atari frames / frame_skip 4 = 125,000 agent steps.

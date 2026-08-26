@@ -1,6 +1,9 @@
+import inspect
+from dataclasses import fields
+
 import numpy as np
 
-from mdqn.replay import FrameReplayBuffer
+from mdqn.replay import FrameReplayBuffer, ReplayBatch
 
 
 def test_replay_zeroes_stack_across_episode_boundaries() -> None:
@@ -26,3 +29,17 @@ def test_replay_samples_matching_state_and_successor() -> None:
         batch.next_states[:, :-1, 0, 0].numpy(),
     )
 
+
+def test_replay_interface_remains_uniform_without_priority_weights() -> None:
+    parameters = tuple(inspect.signature(FrameReplayBuffer.sample).parameters)
+    assert parameters == ("self", "batch_size", "device")
+    assert {field.name for field in fields(ReplayBatch)} == {
+        "states",
+        "actions",
+        "rewards",
+        "next_states",
+        "dones",
+    }
+    source = inspect.getsource(FrameReplayBuffer.sample).lower()
+    assert "priority" not in source
+    assert "importance" not in source
